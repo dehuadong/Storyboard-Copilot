@@ -1,23 +1,56 @@
 pub mod ai;
 pub mod commands;
 
+use std::path::PathBuf;
+
 use commands::ai as ai_commands;
 use commands::image;
 use commands::project_state;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-fn setup_logging() {
-    let file_appender = tracing_appender::rolling::daily("logs", "storyboard.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+fn resolve_log_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,storyboard_copilot=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
-        .init();
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join("Library/Logs/storyboard-copilot"));
+    }
+
+    candidates.push(std::env::temp_dir().join("storyboard-copilot/logs"));
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("logs"));
+    }
+
+    for directory in candidates {
+        if std::fs::create_dir_all(&directory).is_ok() {
+            return Some(directory);
+        }
+    }
+
+    None
+}
+
+fn setup_logging() {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,storyboard_copilot=debug".into());
+
+    if let Some(log_dir) = resolve_log_dir() {
+        let file_appender = tracing_appender::rolling::daily(log_dir, "storyboard.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        std::mem::forget(_guard);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     info!("Storyboard Copilot starting...");
 }
