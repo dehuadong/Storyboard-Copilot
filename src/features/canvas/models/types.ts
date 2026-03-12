@@ -1,3 +1,5 @@
+import type { ModelPricingDefinition } from '@/features/canvas/pricing/types';
+
 export type MediaModelType = 'image' | 'video' | 'audio';
 
 export interface ModelProviderDefinition {
@@ -21,10 +23,12 @@ export type ExtraParamType = 'boolean' | 'enum' | 'number' | 'string';
 export interface ExtraParamDefinition {
   key: string;
   label: string;
+  labelKey?: string;
   type: ExtraParamType;
   description?: string;
+  descriptionKey?: string;
   defaultValue?: boolean | number | string;
-  options?: Array<{ value: string; label: string }>;
+  options?: Array<{ value: string; label: string; labelKey?: string }>;
   min?: number;
   max?: number;
   step?: number;
@@ -44,6 +48,7 @@ export interface ImageModelDefinition {
   resolutions: ResolutionOption[];
   extraParamsSchema?: ExtraParamDefinition[];
   defaultExtraParams?: Record<string, unknown>;
+  pricing?: ModelPricingDefinition;
   resolveRequest: (context: { referenceImageCount: number }) => {
     requestModel: string;
     modeLabel: string;

@@ -185,6 +185,13 @@ impl AIProvider for FalProvider {
             .and_then(|params| params.get("enable_web_search"))
             .and_then(|raw| raw.as_bool())
             .unwrap_or(false);
+        let thinking_level = request
+            .extra_params
+            .as_ref()
+            .and_then(|params| params.get("thinking_level"))
+            .and_then(|raw| raw.as_str())
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| value == "minimal" || value == "high");
 
         let has_reference_images = request
             .reference_images
@@ -208,9 +215,18 @@ impl AIProvider for FalProvider {
             input["image_urls"] = json!(reference_images);
         }
 
+        if let Some(thinking_level) = thinking_level.as_ref() {
+            input["thinking_level"] = json!(thinking_level);
+        }
+
         info!(
-            "[FAL Request] model: {}, route: {}, size: {}, aspect_ratio: {}, web_search: {}",
-            request.model, model_path, request.size, request.aspect_ratio, enable_web_search
+            "[FAL Request] model: {}, route: {}, size: {}, aspect_ratio: {}, web_search: {}, thinking_level: {}",
+            request.model,
+            model_path,
+            request.size,
+            request.aspect_ratio,
+            enable_web_search,
+            thinking_level.as_deref().unwrap_or("off")
         );
         let submit_response = self
             .client

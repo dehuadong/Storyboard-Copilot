@@ -97,7 +97,9 @@ export function NodeHeader({
   const tone = toneClassName ?? NODE_HEADER_TONE_CLASS;
   const canEditTitle = editable && typeof titleText === 'string' && typeof onTitleChange === 'function';
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [titleMeasureElement, setTitleMeasureElement] = useState<HTMLElement | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isTitleOverflowing, setIsTitleOverflowing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(() => sanitizeTitle(titleText));
 
   useEffect(() => {
@@ -114,6 +116,31 @@ export function NodeHeader({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [isEditingTitle]);
+
+  useEffect(() => {
+    if (!titleMeasureElement || isEditingTitle) {
+      setIsTitleOverflowing(false);
+      return;
+    }
+
+    const measureOverflow = () => {
+      const nextOverflowing =
+        titleMeasureElement.scrollWidth - titleMeasureElement.clientWidth > 1;
+      setIsTitleOverflowing((previous) =>
+        previous === nextOverflowing ? previous : nextOverflowing
+      );
+    };
+
+    measureOverflow();
+    const frameId = requestAnimationFrame(measureOverflow);
+    const observer = new ResizeObserver(measureOverflow);
+    observer.observe(titleMeasureElement);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      observer.disconnect();
+    };
+  }, [isEditingTitle, titleMeasureElement, titleText]);
 
   const commitTitle = useCallback(() => {
     if (!canEditTitle || !onTitleChange) {
@@ -137,11 +164,14 @@ export function NodeHeader({
     setIsEditingTitle(false);
   }, [titleText]);
 
+  const titleFadeStyle = isTitleOverflowing ? NODE_HEADER_TITLE_FADE_STYLE : undefined;
+
   const resolvedTitle = useMemo(() => {
     if (!canEditTitle) {
       if (titleText) {
         return (
           <span
+            ref={setTitleMeasureElement}
             title={titleText}
             className={joinClasses(
               'block min-w-0 overflow-hidden whitespace-nowrap cursor-grab select-none active:cursor-grabbing',
@@ -150,7 +180,7 @@ export function NodeHeader({
               tone,
               titleClassName
             )}
-            style={NODE_HEADER_TITLE_FADE_STYLE}
+            style={titleFadeStyle}
           >
             {titleText}
           </span>
@@ -191,6 +221,7 @@ export function NodeHeader({
     return (
       <button
         type="button"
+        ref={setTitleMeasureElement}
         className={joinClasses(
           'block min-w-0 overflow-hidden whitespace-nowrap cursor-grab select-none rounded px-0 text-left active:cursor-grabbing',
           NODE_HEADER_TITLE_MAX_WIDTH_CLASS,
@@ -198,7 +229,7 @@ export function NodeHeader({
           tone,
           titleClassName
         )}
-        style={NODE_HEADER_TITLE_FADE_STYLE}
+        style={titleFadeStyle}
         title={titleText}
         onClick={(event) => event.stopPropagation()}
         onDoubleClick={(event) => {
@@ -215,7 +246,9 @@ export function NodeHeader({
     commitTitle,
     draftTitle,
     isEditingTitle,
+    isTitleOverflowing,
     title,
+    titleFadeStyle,
     titleClassName,
     titleText,
     tone,
@@ -226,21 +259,27 @@ export function NodeHeader({
     : meta;
 
   return (
-    <div className={joinClasses('flex w-full max-w-full items-start justify-between gap-2', className)}>
+    <div className={joinClasses('w-full max-w-full', className)}>
       <div className="min-w-0 flex-1" style={composeTransformStyle(headerAdjust)}>
-        <div className={joinClasses('flex w-full items-center gap-1', titleRowClassName)}>
-          {icon ? (
-            <span
-              className={joinClasses('inline-flex items-center justify-center', tone, iconClassName)}
-              style={composeTransformStyle(iconAdjust)}
+        <div className={joinClasses('flex w-full items-baseline justify-between gap-2', titleRowClassName)}>
+          <div className="flex min-w-0 flex-1 items-baseline gap-1">
+            {icon ? (
+              <span
+                className={joinClasses('inline-flex items-center justify-center self-center', tone, iconClassName)}
+                style={composeTransformStyle(iconAdjust)}
+              >
+                {icon}
+              </span>
+            ) : null}
+            <div
+              className="flex w-0 min-w-0 flex-1 items-baseline gap-2"
+              style={composeTransformStyle(titleAdjust)}
             >
-              {icon}
-            </span>
-          ) : null}
-          <div className="flex w-0 min-w-0 flex-1 items-baseline gap-2" style={composeTransformStyle(titleAdjust)}>
-            {resolvedTitle}
-            {resolvedMeta}
+              {resolvedTitle}
+              {resolvedMeta}
+            </div>
           </div>
+          {rightSlot ? <div className="ml-2 flex shrink-0 items-baseline">{rightSlot}</div> : null}
         </div>
         {subtitle ? (
           <div className={joinClasses('text-[11px] text-text-muted/80', subtitleClassName)}>
@@ -248,7 +287,7 @@ export function NodeHeader({
           </div>
         ) : null}
       </div>
-      {rightSlot}
     </div>
   );
 }
+

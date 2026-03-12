@@ -54,6 +54,7 @@ import {
 import { GRSAI_NANO_BANANA_PRO_MODEL_ID } from '@/features/canvas/models/image/grsai/nanoBananaPro';
 import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/nanoBanana2';
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
+import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
   NODE_CONTROL_CHIP_CLASS,
   NODE_CONTROL_ICON_CLASS,
@@ -63,6 +64,7 @@ import {
 } from '@/features/canvas/ui/nodeControlStyles';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
+import { NodePriceBadge } from '@/features/canvas/ui/NodePriceBadge';
 import { UiButton } from '@/components/ui';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -221,7 +223,7 @@ function buildAiResultNodeTitle(prompt: string, fallbackTitle: string): string {
 }
 
 export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageEditNodeProps) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const [error, setError] = useState<string | null>(null);
 
@@ -244,6 +246,11 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const addEdge = useCanvasStore((state) => state.addEdge);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const grsaiNanoBananaProModel = useSettingsStore((state) => state.grsaiNanoBananaProModel);
+  const showNodePrice = useSettingsStore((state) => state.showNodePrice);
+  const priceDisplayCurrencyMode = useSettingsStore((state) => state.priceDisplayCurrencyMode);
+  const usdToCnyRate = useSettingsStore((state) => state.usdToCnyRate);
+  const preferDiscountedPrice = useSettingsStore((state) => state.preferDiscountedPrice);
+  const grsaiCreditTierId = useSettingsStore((state) => state.grsaiCreditTierId);
 
   const incomingImages = useMemo(
     () => graphImageResolver.collectInputImages(id, nodes, edges),
@@ -302,6 +309,69 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     selectedModel.id === FAL_NANO_BANANA_2_MODEL_ID ||
     selectedModel.id === KIE_NANO_BANANA_2_MODEL_ID;
   const webSearchEnabled = Boolean(data.extraParams?.enable_web_search);
+  const pricingExtraParams = useMemo(
+    () => ({
+      ...(data.extraParams ?? {}),
+      ...(selectedModel.id === GRSAI_NANO_BANANA_PRO_MODEL_ID
+        ? { grsai_pro_model: grsaiNanoBananaProModel }
+        : {}),
+    }),
+    [data.extraParams, grsaiNanoBananaProModel, selectedModel.id]
+  );
+  const resolvedPriceDisplay = useMemo(
+    () =>
+      showNodePrice
+        ? resolveModelPriceDisplay(selectedModel, {
+          resolution: selectedResolution.value,
+          extraParams: pricingExtraParams,
+          language: i18n.language,
+          settings: {
+            displayCurrencyMode: priceDisplayCurrencyMode,
+            usdToCnyRate,
+            preferDiscountedPrice,
+            grsaiCreditTierId,
+          },
+        })
+        : null,
+    [
+      grsaiCreditTierId,
+      i18n.language,
+      preferDiscountedPrice,
+      priceDisplayCurrencyMode,
+      pricingExtraParams,
+      selectedModel,
+      selectedResolution.value,
+      showNodePrice,
+      usdToCnyRate,
+    ]
+  );
+  const resolvedPriceTooltip = useMemo(() => {
+    if (!resolvedPriceDisplay) {
+      return undefined;
+    }
+
+    const lines = [resolvedPriceDisplay.label];
+    if (resolvedPriceDisplay.nativeLabel) {
+      lines.push(t('pricing.nativePrice', { value: resolvedPriceDisplay.nativeLabel }));
+    }
+    if (resolvedPriceDisplay.originalLabel) {
+      lines.push(t('pricing.originalPrice', { value: resolvedPriceDisplay.originalLabel }));
+    }
+    if (resolvedPriceDisplay.pointsCost) {
+      lines.push(t('pricing.pointsCost', { count: resolvedPriceDisplay.pointsCost }));
+    }
+    if (resolvedPriceDisplay.grsaiCreditTier) {
+      lines.push(
+        t('pricing.grsaiTier', {
+          price: resolvedPriceDisplay.grsaiCreditTier.priceCny.toFixed(2),
+          credits: resolvedPriceDisplay.grsaiCreditTier.credits.toLocaleString(
+            i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US'
+          ),
+        })
+      );
+    }
+    return lines.join('\n');
+  }, [i18n.language, resolvedPriceDisplay, t]);
 
   const supportedAspectRatioValues = useMemo(
     () => selectedModel.aspectRatios.map((item) => item.value),
@@ -669,6 +739,14 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         className={NODE_HEADER_FLOATING_POSITION_CLASS}
         icon={<Sparkles className="h-4 w-4" />}
         titleText={resolvedTitle}
+        rightSlot={
+          resolvedPriceDisplay ? (
+            <NodePriceBadge
+              label={resolvedPriceDisplay.label}
+              title={resolvedPriceTooltip}
+            />
+          ) : undefined
+        }
         editable
         onTitleChange={(nextTitle) => updateNodeData(id, { displayName: nextTitle })}
       />
@@ -761,6 +839,15 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
           onAspectRatioChange={(aspectRatio) => {
             updateNodeData(id, { requestAspectRatio: aspectRatio });
           }
+          }
+          extraParams={data.extraParams}
+          onExtraParamChange={(key, value) =>
+            updateNodeData(id, {
+              extraParams: {
+                ...(data.extraParams ?? {}),
+                [key]: value,
+              },
+            })
           }
           showWebSearchToggle={showWebSearchToggle}
           webSearchEnabled={webSearchEnabled}

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, SlidersHorizontal, Zap } from 'lucide-react';
+import { SlidersHorizontal, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AUTO_REQUEST_ASPECT_RATIO } from '@/features/canvas/domain/canvasNodes';
@@ -15,6 +15,9 @@ import {
   UiModal,
   UiPanel,
   UiButton,
+  UiInput,
+  UiCheckbox,
+  UiSelect,
 } from '@/components/ui';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { openSettingsDialog } from '@/features/settings/settingsEvents';
@@ -28,6 +31,8 @@ interface ModelParamsControlsProps {
   onModelChange: (modelId: string) => void;
   onResolutionChange: (resolution: string) => void;
   onAspectRatioChange: (aspectRatio: string) => void;
+  extraParams?: Record<string, unknown>;
+  onExtraParamChange?: (key: string, value: boolean | number | string) => void;
   showWebSearchToggle?: boolean;
   webSearchEnabled?: boolean;
   onWebSearchToggle?: (enabled: boolean) => void;
@@ -47,6 +52,8 @@ interface PanelAnchor {
   left: number;
   top: number;
 }
+
+const OTHER_PARAMS_PANEL_CLASS_NAME = 'w-[280px] p-3';
 
 function NanoBananaIcon({ className = '' }: { className?: string }) {
   return (
@@ -85,6 +92,42 @@ function getRatioPreviewStyle(ratio: string): { width: number; height: number } 
   };
 }
 
+function resolveTranslatedText(
+  t: (key: string) => string,
+  key: string | undefined,
+  fallback: string | undefined
+): string {
+  if (!key) {
+    return fallback ?? '';
+  }
+
+  const translated = t(key);
+  return translated === key ? (fallback ?? key) : translated;
+}
+
+function resolveExtraParamValue(
+  key: string,
+  extraParams: Record<string, unknown> | undefined,
+  defaultExtraParams: Record<string, unknown> | undefined,
+  schemaDefault: boolean | number | string | undefined
+): boolean | number | string | undefined {
+  const currentValue = extraParams?.[key];
+  if (typeof currentValue === 'boolean' || typeof currentValue === 'number' || typeof currentValue === 'string') {
+    return currentValue;
+  }
+
+  const modelDefaultValue = defaultExtraParams?.[key];
+  if (
+    typeof modelDefaultValue === 'boolean' ||
+    typeof modelDefaultValue === 'number' ||
+    typeof modelDefaultValue === 'string'
+  ) {
+    return modelDefaultValue;
+  }
+
+  return schemaDefault;
+}
+
 export const ModelParamsControls = memo(({
   imageModels,
   selectedModel,
@@ -94,6 +137,8 @@ export const ModelParamsControls = memo(({
   onModelChange,
   onResolutionChange,
   onAspectRatioChange,
+  extraParams,
+  onExtraParamChange,
   showWebSearchToggle = false,
   webSearchEnabled = false,
   onWebSearchToggle,
@@ -112,15 +157,19 @@ export const ModelParamsControls = memo(({
   const containerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLDivElement>(null);
   const paramsTriggerRef = useRef<HTMLDivElement>(null);
+  const otherParamsTriggerRef = useRef<HTMLDivElement>(null);
   const modelPanelRef = useRef<HTMLDivElement>(null);
   const paramsPanelRef = useRef<HTMLDivElement>(null);
-  const [openPanel, setOpenPanel] = useState<'model' | 'params' | null>(null);
-  const [renderPanel, setRenderPanel] = useState<'model' | 'params' | null>(null);
+  const otherParamsPanelRef = useRef<HTMLDivElement>(null);
+  const [openPanel, setOpenPanel] = useState<'model' | 'params' | 'otherParams' | null>(null);
+  const [renderPanel, setRenderPanel] = useState<'model' | 'params' | 'otherParams' | null>(null);
   const [isPanelVisible, setIsPanelVisible] = useState(false);
   const [modelPanelAnchor, setModelPanelAnchor] = useState<PanelAnchor | null>(null);
   const [paramsPanelAnchor, setParamsPanelAnchor] = useState<PanelAnchor | null>(null);
+  const [otherParamsPanelAnchor, setOtherParamsPanelAnchor] = useState<PanelAnchor | null>(null);
   const [modelAnchorBaseWidth, setModelAnchorBaseWidth] = useState<number | null>(null);
   const [paramsAnchorBaseWidth, setParamsAnchorBaseWidth] = useState<number | null>(null);
+  const [otherParamsAnchorBaseWidth, setOtherParamsAnchorBaseWidth] = useState<number | null>(null);
   const [panelProviderId, setPanelProviderId] = useState(selectedModel.providerId);
   const [missingKeyProviderName, setMissingKeyProviderName] = useState<string | null>(null);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
@@ -178,6 +227,19 @@ export const ModelParamsControls = memo(({
   const paramsSecondaryTextClassName = isCompactTrigger
     ? 'text-[10px] leading-none text-text-muted/80'
     : 'text-text-muted/80';
+  const extraParamSchema = selectedModel.extraParamsSchema ?? [];
+  const inlineExtraParamSchema = useMemo(
+    () =>
+      extraParamSchema.filter(
+        (definition) => definition.key === 'thinking_level' && definition.type === 'enum'
+      ),
+    [extraParamSchema]
+  );
+  const panelExtraParamSchema = useMemo(
+    () => extraParamSchema.filter((definition) => definition.key !== 'thinking_level'),
+    [extraParamSchema]
+  );
+  const hasOtherParamsPanel = showWebSearchToggle || inlineExtraParamSchema.length > 0;
 
   useEffect(() => {
     const animationDurationMs = 200;
@@ -256,6 +318,9 @@ export const ModelParamsControls = memo(({
         return;
       }
       if (paramsPanelRef.current?.contains(target)) {
+        return;
+      }
+      if (otherParamsPanelRef.current?.contains(target)) {
         return;
       }
       setOpenPanel(null);
@@ -354,27 +419,32 @@ export const ModelParamsControls = memo(({
         </UiChipButton>
       </div>
 
-      {showWebSearchToggle && (
-        <UiChipButton
-          active={webSearchEnabled}
-          className={`${chipClassName} w-auto justify-center shrink-0`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onWebSearchToggle?.(!webSearchEnabled);
-          }}
-        >
-          <span
-            className={`inline-flex h-3 w-3 items-center justify-center rounded-[2px] border ${webSearchEnabled
-                ? 'border-accent bg-accent text-white'
-                : 'border-text-muted/70 bg-transparent text-transparent'
-              }`}
+      {hasOtherParamsPanel && (
+        <div ref={otherParamsTriggerRef} className="relative flex">
+          <UiChipButton
+            active={openPanel === 'otherParams'}
+            className={`${chipClassName} w-auto shrink-0 justify-center`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (openPanel === 'otherParams') {
+                setOpenPanel(null);
+                return;
+              }
+              const triggerWidth = otherParamsTriggerRef.current?.getBoundingClientRect().width ?? null;
+              const nextBaseWidth = otherParamsAnchorBaseWidth ?? triggerWidth;
+              if (otherParamsAnchorBaseWidth == null && triggerWidth) {
+                setOtherParamsAnchorBaseWidth(triggerWidth);
+              }
+              setOtherParamsPanelAnchor(
+                getPanelAnchor(otherParamsTriggerRef.current, 'center', nextBaseWidth)
+              );
+              setOpenPanel('otherParams');
+            }}
           >
-            <Check className="h-2 w-2" strokeWidth={3} />
-          </span>
-          <span className={paramsPrimaryTextClassName}>
-            {webSearchLabel ?? t('modelParams.enableWebSearch')}
-          </span>
-        </UiChipButton>
+            <SlidersHorizontal className={paramsIconClassName} />
+            <span className={paramsPrimaryTextClassName}>{t('modelParams.otherParams')}</span>
+          </UiChipButton>
+        </div>
       )}
 
       {typeof document !== 'undefined' && renderPanel === 'model' && createPortal(
@@ -526,6 +596,172 @@ export const ModelParamsControls = memo(({
                   );
                 })}
               </div>
+            </div>
+
+            {panelExtraParamSchema.length > 0 && (
+              <div className="mt-3">
+                <div className="mb-2 text-xs text-text-muted">{t('modelParams.extraOptions')}</div>
+                <div className="space-y-2 rounded-xl border border-[rgba(255,255,255,0.1)] bg-bg-dark/65 p-3">
+                  {panelExtraParamSchema.map((definition) => {
+                    const translatedLabel = resolveTranslatedText(
+                      t,
+                      definition.labelKey,
+                      definition.label
+                    );
+                    const translatedDescription = definition.description || definition.descriptionKey
+                      ? resolveTranslatedText(
+                        t,
+                        definition.descriptionKey,
+                        definition.description
+                      )
+                      : '';
+                    const resolvedValue = resolveExtraParamValue(
+                      definition.key,
+                      extraParams,
+                      selectedModel.defaultExtraParams,
+                      definition.defaultValue
+                    );
+
+                    return (
+                      <div key={definition.key} className="space-y-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-black/10 p-2">
+                        <div>
+                          <div className="text-xs font-medium text-text-dark">{translatedLabel}</div>
+                          {translatedDescription && (
+                            <div className="mt-0.5 text-[11px] leading-4 text-text-muted">
+                              {translatedDescription}
+                            </div>
+                          )}
+                        </div>
+
+                        {definition.type === 'enum' && definition.options && (
+                          <UiSelect
+                            value={String(resolvedValue ?? '')}
+                            onChange={(event) =>
+                              onExtraParamChange?.(definition.key, event.target.value)
+                            }
+                            className="h-9 text-sm"
+                          >
+                            {definition.options.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {resolveTranslatedText(t, option.labelKey, option.label)}
+                              </option>
+                            ))}
+                          </UiSelect>
+                        )}
+
+                        {definition.type === 'boolean' && (
+                          <label className="flex cursor-pointer items-center gap-2 text-sm text-text-dark">
+                            <UiCheckbox
+                              checked={Boolean(resolvedValue)}
+                              onCheckedChange={(checked) =>
+                                onExtraParamChange?.(definition.key, checked)
+                              }
+                            />
+                            <span>{translatedLabel}</span>
+                          </label>
+                        )}
+
+                        {definition.type === 'number' && (
+                          <UiInput
+                            type="number"
+                            min={definition.min}
+                            max={definition.max}
+                            step={definition.step}
+                            value={typeof resolvedValue === 'number' ? String(resolvedValue) : ''}
+                            onChange={(event) =>
+                              onExtraParamChange?.(definition.key, Number(event.target.value))
+                            }
+                            className="h-9 text-sm"
+                          />
+                        )}
+
+                        {definition.type === 'string' && (
+                          <UiInput
+                            value={typeof resolvedValue === 'string' ? resolvedValue : ''}
+                            onChange={(event) =>
+                              onExtraParamChange?.(definition.key, event.target.value)
+                            }
+                            className="h-9 text-sm"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </UiPanel>
+        </div>,
+        document.body
+      )}
+
+      {typeof document !== 'undefined' && renderPanel === 'otherParams' && createPortal(
+        <div
+          ref={otherParamsPanelRef}
+          className={`fixed z-[80] transition-opacity duration-200 ease-out ${isPanelVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+          style={buildPanelStyle(otherParamsPanelAnchor, 'center')}
+        >
+          <UiPanel className={OTHER_PARAMS_PANEL_CLASS_NAME}>
+            <div className="space-y-3">
+              {showWebSearchToggle && (
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[rgba(255,255,255,0.08)] bg-bg-dark/65 px-3 py-2">
+                  <UiCheckbox
+                    checked={webSearchEnabled}
+                    onCheckedChange={(checked) => onWebSearchToggle?.(checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-text-dark">
+                      {webSearchLabel ?? t('modelParams.enableWebSearch')}
+                    </div>
+                  </div>
+                </label>
+              )}
+
+              {inlineExtraParamSchema.map((definition) => {
+                const translatedLabel = resolveTranslatedText(t, definition.labelKey, definition.label);
+                const translatedDescription = definition.description || definition.descriptionKey
+                  ? resolveTranslatedText(
+                    t,
+                    definition.descriptionKey,
+                    definition.description
+                  )
+                  : '';
+                const resolvedValue = resolveExtraParamValue(
+                  definition.key,
+                  extraParams,
+                  selectedModel.defaultExtraParams,
+                  definition.defaultValue
+                );
+
+                return (
+                  <div
+                    key={definition.key}
+                    className="space-y-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-bg-dark/65 p-3"
+                  >
+                    <div>
+                      <div className="text-xs font-medium text-text-dark">{translatedLabel}</div>
+                      {translatedDescription && (
+                        <div className="mt-0.5 text-[11px] leading-4 text-text-muted">
+                          {translatedDescription}
+                        </div>
+                      )}
+                    </div>
+                    <UiSelect
+                      value={String(resolvedValue ?? '')}
+                      onChange={(event) => onExtraParamChange?.(definition.key, event.target.value)}
+                      className="h-9 text-sm"
+                    >
+                      {(definition.options ?? []).map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {resolveTranslatedText(t, option.labelKey, option.label)}
+                        </option>
+                      ))}
+                    </UiSelect>
+                  </div>
+                );
+              })}
             </div>
           </UiPanel>
         </div>,
